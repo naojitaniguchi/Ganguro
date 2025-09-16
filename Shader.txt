@@ -1,0 +1,303 @@
+// "ガングロ族の最後" - 3D Shader inspired by Yuka Kubo's book
+// Themes: Evolution from beach culture to extreme character makeup
+// The journey from natural sun-kissed skin to the "uncanny valley" of extreme styling
+
+#define PI 3.14159265359
+#define TAU 6.28318530718
+
+// Noise function for organic textures
+float noise(vec3 p) {
+    vec3 f = fract(p);
+    p = floor(p);
+    f = f*f*(3.0-2.0*f);
+    
+    float n = p.x + p.y*57.0 + 113.0*p.z;
+    return mix(mix(mix(fract(sin(n)*43758.5453),
+                      fract(sin(n+1.0)*43758.5453), f.x),
+                  mix(fract(sin(n+57.0)*43758.5453),
+                      fract(sin(n+58.0)*43758.5453), f.x), f.y),
+              mix(mix(fract(sin(n+113.0)*43758.5453),
+                      fract(sin(n+114.0)*43758.5453), f.x),
+                  mix(fract(sin(n+170.0)*43758.5453),
+                      fract(sin(n+171.0)*43758.5453), f.x), f.y), f.z);
+}
+
+// Fractal noise for complex textures
+float fbm(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    
+    for(int i = 0; i < 5; i++) {
+        value += amplitude * noise(p * frequency);
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    return value;
+}
+
+// Distance function for a face-like shape
+float sdFace(vec3 p) {
+    // Basic ellipsoid for face shape
+    vec3 d = abs(p) - vec3(0.8, 1.0, 0.6);
+    return min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, 0.0));
+}
+
+// Eyes with exaggerated makeup effect
+float sdEyes(vec3 p) {
+    vec3 eyeL = p - vec3(-0.3, 0.2, 0.4);
+    vec3 eyeR = p - vec3(0.3, 0.2, 0.4);
+    
+    // Exaggerated eye shapes - representing "dekame" (big eye) trend
+    float leftEye = length(eyeL) - 0.15;
+    float rightEye = length(eyeR) - 0.15;
+    
+    return min(leftEye, rightEye);
+}
+
+// Cloth-like fabric distance function
+float sdCloth(vec3 p, float time, vec3 offset) {
+    p -= offset;
+    
+    // Create flowing cloth movement
+    float wave1 = sin(p.x * 2.0 + time * 1.5) * 0.3;
+    float wave2 = sin(p.z * 1.5 + time * 2.0) * 0.2;
+    float wave3 = sin(p.y * 3.0 + time * 1.0) * 0.15;
+    
+    p.y += wave1 + wave2;
+    p.x += wave3;
+    
+    // Create ribbon-like shape
+    vec2 d = abs(vec2(length(p.xz) - 0.5, p.y)) - vec2(0.1, 1.5);
+    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+}
+
+// Multiple intertwining cloths
+float sdMultiCloth(vec3 p, float time) {
+    float cloth1 = sdCloth(p, time, vec3(1.0, 0.0, 0.5));
+    float cloth2 = sdCloth(p, time * 1.3, vec3(-0.8, 0.5, -0.3));
+    float cloth3 = sdCloth(p, time * 0.7, vec3(0.2, -0.8, 1.0));
+    float cloth4 = sdCloth(p, time * 1.8, vec3(-0.5, 0.3, -0.8));
+    
+    return min(min(cloth1, cloth2), min(cloth3, cloth4));
+}
+
+// Scene distance function
+float map(vec3 p) {
+    float time = iTime * 0.5;
+    
+    // Rotate the scene
+    float angle = time * 0.3;
+    mat3 rot = mat3(cos(angle), 0, sin(angle),
+                    0, 1, 0,
+                    -sin(angle), 0, cos(angle));
+    p = rot * p;
+    
+    // Main face structure
+    float face = sdFace(p);
+    
+    // Add wave distortions - representing the evolution and transformation
+    float wave = sin(p.x * 3.0 + time) * sin(p.y * 2.0 + time) * 0.1;
+    face += wave;
+    
+    // Eyes
+    float eyes = sdEyes(p);
+    
+    // Multiple flowing cloths
+    float cloths = sdMultiCloth(p, time);
+    
+    float faceAndEyes = min(face, eyes - 0.05);
+    return min(faceAndEyes, cloths);
+}
+
+// Calculate normals
+vec3 calcNormal(vec3 p) {
+    const float eps = 0.001;
+    return normalize(vec3(
+        map(p + vec3(eps, 0, 0)) - map(p - vec3(eps, 0, 0)),
+        map(p + vec3(0, eps, 0)) - map(p - vec3(0, eps, 0)),
+        map(p + vec3(0, 0, eps)) - map(p - vec3(0, 0, eps))
+    ));
+}
+
+// Raymarching
+float rayMarch(vec3 ro, vec3 rd) {
+    float t = 0.0;
+    for(int i = 0; i < 100; i++) {
+        vec3 p = ro + t * rd;
+        float d = map(p);
+        if(d < 0.001 || t > 20.0) break;
+        t += d;
+    }
+    return t;
+}
+
+// Check if point is on cloth surface
+bool isCloth(vec3 p, float time) {
+    float clothDist = sdMultiCloth(p, time);
+    float faceDist = min(sdFace(p), sdEyes(p) - 0.05);
+    return clothDist < faceDist;
+}
+
+// Color palette inspired by ganguro evolution
+vec3 getColor(vec3 p, vec3 normal) {
+    float time = iTime * 0.5;
+    
+    // Check if this point is on cloth
+    if(isCloth(p, time)) {
+        // Cloth colors - red and green systems
+        vec3 redCloth = vec3(0.9, 0.2, 0.3);
+        vec3 darkRed = vec3(0.6, 0.1, 0.1);
+        vec3 greenCloth = vec3(0.2, 0.8, 0.3);
+        vec3 darkGreen = vec3(0.1, 0.5, 0.2);
+        
+        // Determine cloth type based on position
+        float clothType = sin(p.x * 2.0 + p.z * 1.5 + time);
+        
+        vec3 clothColor;
+        if(clothType > 0.0) {
+            // Red cloth system
+            float redVariation = sin(p.y * 3.0 + time * 2.0) * 0.5 + 0.5;
+            clothColor = mix(darkRed, redCloth, redVariation);
+        } else {
+            // Green cloth system
+            float greenVariation = sin(p.y * 4.0 + time * 1.5) * 0.5 + 0.5;
+            clothColor = mix(darkGreen, greenCloth, greenVariation);
+        }
+        
+        // Add fabric texture
+        float fabricNoise = fbm(p * 8.0);
+        clothColor *= (0.7 + 0.6 * fabricNoise);
+        
+        // Add flowing highlights
+        float flow = sin(p.x * 2.0 + time * 3.0) * sin(p.z * 1.5 + time * 2.0);
+        flow = smoothstep(0.3, 0.8, flow);
+        clothColor += vec3(0.3, 0.3, 0.4) * flow;
+        
+        // Cloth lighting
+        float clothLight = max(0.3, dot(normal, normalize(vec3(1.0, 1.0, 0.5))));
+        return clothColor * clothLight;
+    }
+    
+    // Original face coloring code for non-cloth areas
+    // Base skin tone - from natural tan to extreme artificial
+    vec3 baseTan = vec3(0.8, 0.5, 0.3);
+    vec3 extremeTan = vec3(0.4, 0.2, 0.1);
+    
+    // Makeup colors - white, neon, extreme
+    vec3 whiteHighlight = vec3(1.0, 1.0, 1.0);
+    vec3 neonAccent = vec3(1.0, 0.3, 0.8);
+    
+    // Time-based color evolution
+    float evolution = sin(time * 0.5) * 0.5 + 0.5;
+    
+    // Mix base colors based on position and time
+    vec3 skinColor = mix(baseTan, extremeTan, evolution);
+    
+    // Add noise for texture variation
+    float skinNoise = fbm(p * 3.0);
+    skinColor *= (0.8 + 0.4 * skinNoise);
+    
+    // Eye area highlighting - representing extreme makeup
+    vec3 eyeL = p - vec3(-0.3, 0.2, 0.4);
+    vec3 eyeR = p - vec3(0.3, 0.2, 0.4);
+    float eyeDistL = length(eyeL);
+    float eyeDistR = length(eyeR);
+    
+    if(eyeDistL < 0.25 || eyeDistR < 0.25) {
+        // Extreme eye makeup - white and neon
+        float eyeEffect = sin(time * 2.0 + p.x * 10.0) * 0.5 + 0.5;
+        skinColor = mix(whiteHighlight, neonAccent, eyeEffect);
+        
+        // Add sparkle effect
+        float sparkle = noise(p * 20.0 + time);
+        if(sparkle > 0.8) {
+            skinColor += vec3(0.5, 0.5, 1.0);
+        }
+    }
+    
+    // Add beach-to-club lighting transition
+    float beachLight = max(0.0, normal.y); // Top-down sun
+    float clubLight = abs(sin(p.x * 5.0 + time)) * abs(sin(p.z * 3.0 + time)); // Colorful club lights
+    
+    float lightMix = sin(time * 0.3) * 0.5 + 0.5;
+    vec3 lighting = mix(vec3(beachLight), vec3(clubLight, clubLight * 0.5, clubLight * 0.8), lightMix);
+    
+    return skinColor * lighting;
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
+    float time = iTime * 0.5;
+    
+    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+    
+    // Camera setup
+    vec3 ro = vec3(0.0, 0.0, 3.0); // Camera position
+    vec3 rd = normalize(vec3(uv, -1.0)); // Ray direction
+    
+    // Add camera movement - representing the cultural journey
+    float camAngle = time * 0.2;
+    ro.x = sin(camAngle) * 2.0;
+    ro.y = sin(time * 0.15) * 0.5;
+    
+    // Raymarch
+    float t = rayMarch(ro, rd);
+    
+    vec3 color = vec3(0.05, 0.05, 0.15); // Dark background (club/night)
+    
+    if(t < 20.0) {
+        vec3 p = ro + t * rd;
+        vec3 normal = calcNormal(p);
+        color = getColor(p, normal);
+        
+        // Add atmospheric perspective
+        float fog = 1.0 / (1.0 + t * t * 0.1);
+        color = mix(vec3(0.1, 0.1, 0.2), color, fog);
+    }
+    
+    // Add background effects - representing media and culture
+    vec2 bgUV = uv * 2.0;
+    float bgPattern = sin(bgUV.x * 10.0 + time) * sin(bgUV.y * 8.0 + time * 0.7);
+    bgPattern = smoothstep(-0.5, 0.5, bgPattern);
+    
+    // Media/magazine aesthetic
+    vec3 mediaColor = vec3(1.0, 0.0, 0.5) * bgPattern * 0.3;
+    color += mediaColor * (1.0 - smoothstep(15.0, 20.0, t));
+    
+    // Final color grading - representing different eras
+    float era = sin(time * 0.1) * 0.5 + 0.5;
+    
+    // Beach era: warmer, more natural
+    vec3 beachGrade = color * vec3(1.2, 1.0, 0.8);
+    
+    // Club/extreme era: more saturated, artificial
+    vec3 clubGrade = pow(color, vec3(0.8)) * vec3(1.0, 1.2, 1.4);
+    
+    color = mix(beachGrade, clubGrade, era);
+    
+    // Vignette effect
+    float vignette = 1.0 - length(uv) * 0.5;
+    color *= vignette;
+    
+    fragColor = vec4(color, 1.0);
+}
+
+// Commentary on the cultural evolution represented in this shader:
+// 
+// 1. Beach Culture Origin: The lighting transitions between natural sunlight (beach) 
+//    and artificial club lighting, representing the journey from Shonan beaches to Shibuya clubs
+//
+// 2. Media Influence: Background patterns simulate magazine/media aesthetics that 
+//    documented and amplified the culture
+//
+// 3. Extreme Evolution: The eye makeup effects become increasingly exaggerated,
+//    representing the shift from "ikeru" (cool/attractive) to "kiwameru" (extreme/mastery)
+//
+// 4. Character/Mask Transformation: The distortions and artificial colors show
+//    the progression toward character-like, mask-like appearances
+//
+// 5. Uncanny Valley: The final color grading and effects push the visuals
+//    beyond natural human appearance, entering the "uncanny valley" territory
+//
+// 6. Cultural Continuity: The cycling between different visual states represents
+//    how the spirit of extreme self-expression continues in new forms (jirai-kei, yami-kei)
